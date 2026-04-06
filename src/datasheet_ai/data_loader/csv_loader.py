@@ -204,6 +204,9 @@ def dataframe_to_rows(df: pd.DataFrame) -> list[tuple]:
         Row tuples.
     """
     normalized_df = normalize_dataframe_columns(df)
+
+    # Convert to object dtype first, otherwise pandas may coerce None back to NaN
+    normalized_df = normalized_df.astype(object)
     normalized_df = normalized_df.where(pd.notna(normalized_df), None)
 
     return [tuple(row) for row in normalized_df.itertuples(index=False, name=None)]
