@@ -1,5 +1,4 @@
-````md
-# DataSheet AI
+# Data_LLM
 
 A modular Python project that loads structured CSV data into SQLite, validates SQL queries, and supports optional LLM-assisted natural language querying.
 
@@ -23,7 +22,7 @@ All requests go through the Query Service.
 The LLM Adapter never executes SQL.  
 All generated SQL must pass through the SQL Validator before execution.
 
-This means the system can remain correct and safe even if the LLM produces bad SQL.
+This means the system can remain correct even if the LLM produces bad SQL.
 
 ## Project Structure
 
@@ -36,42 +35,21 @@ data_llm/
 │  ├─ databases/
 │  │  └─ app.db
 │  └─ sample_csv/
-│     └─ students.csv
 ├─ src/
 │  └─ datasheet_ai/
-│     ├─ __init__.py
 │     ├─ cli.py
 │     ├─ config.py
 │     ├─ models.py
 │     ├─ db/
-│     │  ├─ __init__.py
-│     │  ├─ connection.py
-│     │  └─ sqlite_setup.py
 │     ├─ data_loader/
-│     │  ├─ __init__.py
-│     │  └─ csv_loader.py
 │     ├─ schema_manager/
-│     │  ├─ __init__.py
-│     │  └─ schema_manager.py
 │     ├─ query_service/
-│     │  ├─ __init__.py
-│     │  └─ query_service.py
 │     ├─ validator/
-│     │  ├─ __init__.py
-│     │  └─ sql_validator.py
 │     └─ llm/
-│        ├─ __init__.py
-│        └─ llm_adapter.py
 ├─ tests/
-│  ├─ __init__.py
-│  ├─ test_csv_loader.py
-│  ├─ test_query_service.py
-│  ├─ test_schema_manager.py
-│  └─ test_sql_validator.py
-├─ .gitignore
-├─ pyproject.toml
 ├─ README.md
-└─ requirements.txt
+├─ requirements.txt
+└─ pyproject.toml
 ````
 
 ## Main Components
@@ -85,7 +63,6 @@ Important: `df.to_sql()` is not used.
 ### 2. Schema Manager
 
 This module inspects existing database tables and compares schemas.
-
 If a CSV matches an existing table, data can be appended.
 If not, a new table can be created.
 
@@ -132,7 +109,6 @@ Supported commands include:
 * `load <csv_path>`
 * `sql`
 * `ask`
-* `help`
 * `exit`
 
 ## Why the System Is Safe
@@ -179,17 +155,6 @@ python -m datasheet_ai.cli
 
 ```bash
 pytest -q
-```
-
-## Example CSV File
-
-Example file: `data/sample_csv/students.csv`
-
-```csv
-First Name,Last Name,Age,Major
-Alice,Johnson,20,Computer Science
-Bob,Smith,22,Mathematics
-Charlie,Brown,19,Physics
 ```
 
 ## Example CLI Usage
@@ -249,30 +214,6 @@ Error: Referenced table(s) do not exist: unknown_table
 
 This demonstrates that the validator catches the issue and prevents invalid execution.
 
-## Example of Valid SQL Query
-
-```sql
-SELECT first_name, age FROM students;
-```
-
-Expected behavior:
-
-* the query is accepted
-* the validator checks the table and columns
-* the result is returned to the user
-
-## Example of Rejected SQL Query
-
-```sql
-DELETE FROM students WHERE id = 1;
-```
-
-Expected behavior:
-
-* the query is rejected
-* the database is not modified
-* the user gets a clear error message
-
 ## Testing Status
 
 The project currently includes unit tests for:
@@ -288,25 +229,3 @@ All tests pass locally.
 
 This project includes a GitHub Actions workflow that installs dependencies and runs pytest automatically on push and pull request.
 
-## What I Learned From This Project
-
-This project was mainly about building a system that is modular, testable, and safe.
-
-A big takeaway was that using an LLM is not enough by itself.
-Even if the LLM can generate SQL, the system still needs a proper validation layer to keep behavior correct.
-
-Another important lesson was that separation of concerns makes the project much easier to test and debug.
-
-## Future Improvements
-
-If I continue this project, the next steps would be:
-
-* connect a real LLM API
-* improve SQL parsing for more complex queries
-* support better schema conflict resolution
-* improve CLI usability
-* add more test cases for edge conditions
-* support richer natural language to SQL prompts
-
-```
-```
