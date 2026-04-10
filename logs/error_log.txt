@@ -1,0 +1,4 @@
+Failed to get schema for table 'missing_table': Table does not exist: missing_table
+Failed to get schema for table 'missing_table': Table does not exist: missing_table
+Failed to get schema for table 'students': Table does not exist: students
+Failed to get schema for table 'missing_table': Table does not exist: missing_table
