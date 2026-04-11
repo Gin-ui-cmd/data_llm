@@ -30,15 +30,11 @@ from datasheet_ai.validator.sql_validator import validate_select_query
 
 class QueryService:
     """
-    Application-level service that coordinates:
+    Main application service for database-related workflows.
 
-    - CSV loading
-    - schema inspection
-    - SQL validation
-    - SQL execution
-    - optional natural-language query flow
-
-    CLI should talk to this service instead of accessing the DB directly.
+    This class sits between the CLI / upper layer and the low-level DB helpers.
+    It coordinates CSV loading, schema inspection, SQL validation, SQL execution,
+    and the optional natural-language-to-SQL flow.
     """
 
     def __init__(self, db_path: str | Path = DEFAULT_DB_PATH, llm_adapter=None):
@@ -48,14 +44,16 @@ class QueryService:
 
     def list_tables(self) -> list[str]:
         """
-        Return all user-defined table names.
+        Return all user-defined table names in the current database.
         """
         with get_connection(self.db_path) as conn:
             return list_tables(conn)
 
     def get_table_schema_text(self, table_name: str) -> str:
         """
-        Return a human-readable schema description for the target table.
+        Return a readable text version of one table schema.
+
+        This is mainly useful for CLI output or debugging.
         """
         try:
             with get_connection(self.db_path) as conn:
@@ -64,6 +62,7 @@ class QueryService:
             lines = [f"Table: {schema.table_name}"]
             for column in schema.columns:
                 lines.append(f"- {column.name}: {column.dtype}")
+
             return "\n".join(lines)
 
         except Exception as exc:
@@ -72,9 +71,9 @@ class QueryService:
 
     def execute_user_sql(self, sql: str) -> QueryResult:
         """
-        Validate a user-provided SQL query, then execute it if valid.
+        Validate a user-written SQL query first, then execute it.
 
-        Only SELECT queries are allowed.
+        Only SELECT statements are allowed to pass through.
         """
         try:
             with get_connection(self.db_path) as conn:
@@ -87,6 +86,7 @@ class QueryService:
                     )
 
                 columns, rows = execute_query(conn, validation.normalized_sql)
+
                 return QueryResult(
                     success=True,
                     columns=columns,
@@ -105,26 +105,21 @@ class QueryService:
 
     def load_csv(self, csv_path: str | Path, table_name: str | None = None) -> CSVLoadResult:
         """
-        Load a CSV file into the SQLite database.
+        Load one CSV file into SQLite.
 
         MVP behavior:
-        - read CSV
+        - read the CSV
         - normalize column names
-        - infer schema
-        - if table_name is provided:
-            * append if schema matches existing table
-            * create if table does not exist
-            * error if table exists but schema mismatches
-        - if table_name is not provided:
-            * try to append to a matching existing table
-            * otherwise create a new table from CSV stem
-            * error if derived table already exists but schema mismatches
+        - infer the schema
+        - decide whether to append or create a table
         """
         try:
             csv_file_path = Path(csv_path)
             df = read_csv_file(csv_file_path)
             df = normalize_dataframe_columns(df)
 
+            # If the caller gives a table name, use it after normalization.
+            # Otherwise derive one from the CSV filename.
             target_table_name = (
                 normalize_column_name(table_name)
                 if table_name
@@ -171,11 +166,11 @@ class QueryService:
 
     def ask_natural_language(self, question: str) -> QueryResult:
         """
-        Generate SQL from a natural-language question, validate it, then execute it.
+        Turn a natural-language question into SQL, then validate and run it.
 
-        Important:
-        - The LLM adapter MUST NOT execute SQL.
-        - Generated SQL is treated as untrusted input and must pass validation.
+        Important safety rule:
+        - the LLM only generates SQL text
+        - the generated SQL is still treated as untrusted input
         """
         if self.llm_adapter is None:
             return QueryResult(
@@ -210,7 +205,12 @@ class QueryService:
         requested_table_name: str,
     ) -> CSVLoadResult:
         """
-        Handle CSV loading when the caller explicitly specifies a target table name.
+        Handle the CSV load flow when the caller explicitly gives a table name.
+
+        In this mode:
+        - append if the table already exists and the schema matches
+        - create a new table if it does not exist
+        - fail if the table exists but the schema does not match
         """
         if table_exists(conn, requested_table_name):
             db_schema = get_table_schema(conn, requested_table_name)
@@ -242,6 +242,7 @@ class QueryService:
                 error_message="",
             )
 
+        # If the table does not exist yet, create it first and then insert data.
         create_sql = build_create_table_sql(csv_schema)
         execute_non_query(conn, create_sql)
 
@@ -267,7 +268,12 @@ class QueryService:
         fallback_table_name: str,
     ) -> CSVLoadResult:
         """
-        Handle CSV loading when no explicit target table name is provided.
+        Handle the CSV load flow when no table name is explicitly provided.
+
+        In this mode:
+        - try to append to an existing compatible table
+        - otherwise fall back to a derived table name
+        - create a new table if needed
         """
         should_append, matched_table_name = should_append_to_existing_table(conn, csv_schema)
 
@@ -335,13 +341,15 @@ class QueryService:
 
     def _derive_table_name(self, csv_path: Path) -> str:
         """
-        Derive a normalized table name from the CSV file stem.
+        Build a normalized table name from the CSV filename.
         """
         return normalize_column_name(csv_path.stem)
 
     def _build_schema_context(self) -> str:
         """
-        Build a text summary of all current table schemas for the LLM adapter.
+        Build a plain-text summary of all current table schemas.
+
+        This is passed to the LLM so it knows what tables and columns exist.
         """
         table_texts: list[str] = []
 
@@ -359,7 +367,7 @@ class QueryService:
 
     def _log_error(self, message: str) -> None:
         """
-        Append an error message to the project error log.
+        Append one error line to the project error log file.
         """
         ERROR_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
         with ERROR_LOG_PATH.open("a", encoding="utf-8") as f:

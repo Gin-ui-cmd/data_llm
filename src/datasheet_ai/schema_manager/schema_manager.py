@@ -8,8 +8,8 @@ def _remove_auto_id_column(schema: TableSchema) -> TableSchema:
     """
     Return a copy of the schema without the auto-generated 'id' column.
 
-    This is useful because CSV-derived schemas typically do not include the
-    SQLite auto-increment primary key column.
+    CSV-based schemas usually do not include SQLite's auto-increment
+    primary key, so we remove it before doing schema comparisons.
     """
     filtered_columns = [
         ColumnSchema(name=col.name, dtype=col.dtype)
@@ -21,50 +21,38 @@ def _remove_auto_id_column(schema: TableSchema) -> TableSchema:
 
 def _normalize_schema_for_compare(schema: TableSchema) -> TableSchema:
     """
-    Normalize a schema for comparison.
+    Normalize a schema before comparison.
 
-    Current MVP behavior:
+    Current MVP behavior is intentionally simple:
     - remove the auto-generated 'id' column
-    - keep column order as-is
+    - keep the original column order
     """
     return _remove_auto_id_column(schema)
 
 
 def get_existing_tables(conn: sqlite3.Connection) -> list[str]:
     """
-    Return all existing user-defined tables.
+    Return all user-defined tables currently in the database.
     """
     return list_tables(conn)
 
 
 def get_existing_schema(conn: sqlite3.Connection, table_name: str) -> TableSchema:
     """
-    Return the schema of an existing table.
+    Return the schema for one existing table.
     """
     return get_table_schema(conn, table_name)
 
 
 def compare_schemas(csv_schema: TableSchema, db_schema: TableSchema) -> SchemaMatchResult:
     """
-    Compare a CSV-derived schema with an existing DB schema.
+    Compare a CSV-inferred schema with a schema from an existing DB table.
 
-    Matching rules for MVP:
-    - ignore the DB auto-generated 'id' column
-    - number of columns must match
-    - normalized column names must match in order
-    - data types must match in order
-
-    Parameters
-    ----------
-    csv_schema : TableSchema
-        Schema inferred from the CSV file.
-    db_schema : TableSchema
-        Schema read from the existing SQLite table.
-
-    Returns
-    -------
-    SchemaMatchResult
-        Structured comparison result.
+    MVP matching rules:
+    - ignore the auto-generated 'id' column on the DB side
+    - column count must match
+    - column names must match in order
+    - column data types must match in order
     """
     normalized_csv_schema = _normalize_schema_for_compare(csv_schema)
     normalized_db_schema = _normalize_schema_for_compare(db_schema)
@@ -85,6 +73,7 @@ def compare_schemas(csv_schema: TableSchema, db_schema: TableSchema) -> SchemaMa
             ),
         )
 
+    # Compare columns one by one in order.
     for csv_col, db_col in zip(csv_columns, db_columns):
         if csv_col.name != db_col.name:
             return SchemaMatchResult(
@@ -120,22 +109,11 @@ def should_append_to_existing_table(
     csv_schema: TableSchema,
 ) -> tuple[bool, str]:
     """
-    Determine whether the CSV schema matches an existing table.
+    Check whether the incoming CSV schema matches any existing table.
 
-    Parameters
-    ----------
-    conn : sqlite3.Connection
-        Open SQLite connection.
-    csv_schema : TableSchema
-        Schema inferred from the CSV file.
-
-    Returns
-    -------
-    tuple[bool, str]
-        (should_append, matched_table_name)
-
-        - (True, table_name) if a matching table is found
-        - (False, "") if no matching table is found
+    Return:
+    - (True, table_name) if we find a compatible table
+    - (False, "") if nothing matches
     """
     existing_tables = get_existing_tables(conn)
 

@@ -1,5 +1,5 @@
 import pytest
-
+#this code is generated with the help of AI
 from datasheet_ai.db.connection import get_connection
 from datasheet_ai.db.sqlite_setup import execute_non_query
 from datasheet_ai.validator.sql_validator import (

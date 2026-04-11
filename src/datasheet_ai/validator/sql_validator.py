@@ -25,27 +25,31 @@ _IDENTIFIER_PATTERN = r"[A-Za-z_][A-Za-z0-9_]*"
 
 def normalize_sql(sql: str) -> str:
     """
-    Normalize whitespace and strip leading/trailing spaces.
+    Clean up the SQL a bit so later checks are easier.
+
+    We just squeeze repeated whitespace into single spaces
+    and trim the string at both ends.
     """
     return re.sub(r"\s+", " ", sql.strip())
 
 
 def has_sql_comments(sql: str) -> bool:
     """
-    Reject SQL comments to reduce injection and parsing ambiguity.
+    Block SQL comments to keep things simpler and safer.
 
-    This validator rejects:
-    - line comments: --
-    - block comments: /* ... */
+    This catches:
+    - line comments like: --
+    - block comments like: /* ... */
     """
     return "--" in sql or "/*" in sql or "*/" in sql
 
 
 def has_multiple_statements(sql: str) -> bool:
     """
-    Reject multiple SQL statements separated by semicolons.
+    Reject multi-statement SQL.
 
-    A single trailing semicolon is allowed.
+    One trailing semicolon is fine, but anything more than that
+    means the query likely contains multiple statements.
     """
     stripped = sql.strip()
     if not stripped:
@@ -59,7 +63,7 @@ def has_multiple_statements(sql: str) -> bool:
 
 def is_select_only(sql: str) -> bool:
     """
-    Return True only if the SQL begins with SELECT.
+    Only allow queries that start with SELECT.
     """
     normalized = normalize_sql(sql).upper()
     return normalized.startswith("SELECT ")
@@ -67,25 +71,27 @@ def is_select_only(sql: str) -> bool:
 
 def contains_disallowed_keywords(sql: str) -> bool:
     """
-    Reject dangerous SQL keywords anywhere in the statement.
+    Check whether the SQL contains any blocked keywords.
     """
     normalized = normalize_sql(sql).upper()
+
     for keyword in DISALLOWED_KEYWORDS:
         if re.search(rf"\b{keyword}\b", normalized):
             return True
+
     return False
 
 
 def validate_query_structure(sql: str) -> ValidationResult:
     """
-    Perform structure-level validation.
+    Run the basic structure checks first.
 
-    Checks:
-    - non-empty
-    - no comments
-    - no multi-statement SQL
+    What we check here:
+    - the query is not empty
+    - no SQL comments
+    - no multiple statements
     - SELECT only
-    - no disallowed keywords
+    - no dangerous keywords
     """
     normalized = normalize_sql(sql)
 
@@ -133,40 +139,43 @@ def validate_query_structure(sql: str) -> ValidationResult:
 
 def extract_table_names(sql: str) -> list[str]:
     """
-    Extract referenced table names from FROM and JOIN clauses.
+    Pull table names from FROM and JOIN clauses.
 
-    MVP limitations:
-    - supports simple SELECT ... FROM table ...
-    - supports JOIN table ...
-    - does not fully parse nested subqueries
+    Current MVP scope:
+    - handles simple SELECT ... FROM table ...
+    - handles JOIN table ...
+    - does not try to fully parse nested subqueries
     """
     normalized = normalize_sql(sql)
+
     pattern = re.compile(
         rf"\b(?:FROM|JOIN)\s+({_IDENTIFIER_PATTERN})\b",
         re.IGNORECASE,
     )
     matches = pattern.findall(normalized)
 
+    # Keep original order and remove duplicates.
     seen: list[str] = []
     for name in matches:
         if name not in seen:
             seen.append(name)
+
     return seen
 
 
 def extract_selected_columns(sql: str) -> list[str]:
     """
-    Extract selected column expressions between SELECT and FROM.
+    Pull out the selected column tokens between SELECT and FROM.
 
-    Returns simplified raw column tokens, for example:
+    Examples of what we keep:
     - "*"
     - "students.*"
     - "name"
     - "students.name"
 
-    MVP behavior:
-    - ignores expressions like COUNT(*), age + 1, CASE ...
-    - removes aliases introduced by AS
+    MVP notes:
+    - expressions like COUNT(*), age + 1, CASE ... are ignored here
+    - aliases added with AS are stripped off
     """
     normalized = normalize_sql(sql)
 
@@ -187,10 +196,11 @@ def extract_selected_columns(sql: str) -> list[str]:
     columns: list[str] = []
 
     for item in raw_items:
-        # Remove trailing alias: "col AS alias"
+        # Example: "col AS alias" -> "col"
         item = re.sub(r"\s+AS\s+\w+$", "", item, flags=re.IGNORECASE).strip()
 
-        # Remove trailing bare alias: "col alias"
+        # Example: "col alias" -> "col"
+        # Only do this for simple identifiers, not function calls.
         if " " in item and "(" not in item and ")" not in item:
             item = item.split()[0].strip()
 
@@ -210,9 +220,9 @@ def extract_selected_columns(sql: str) -> list[str]:
             columns.append(item)
             continue
 
-        # For MVP, skip validating computed expressions/functions.
-        # They are allowed to pass structure validation, but only simple
-        # identifiers are validated at the column level.
+        # For MVP, computed expressions and function calls are allowed
+        # to get past structure validation, but we skip column-level
+        # validation for them here.
         continue
 
     return columns
@@ -223,7 +233,7 @@ def validate_tables_exist(
     table_names: list[str],
 ) -> ValidationResult:
     """
-    Check whether all referenced tables exist.
+    Make sure every referenced table actually exists.
     """
     if not table_names:
         return ValidationResult(
@@ -234,7 +244,11 @@ def validate_tables_exist(
     existing_tables = list_tables(conn)
     existing_lookup = {name.lower(): name for name in existing_tables}
 
-    missing_tables = [name for name in table_names if name.lower() not in existing_lookup]
+    missing_tables = [
+        name for name in table_names
+        if name.lower() not in existing_lookup
+    ]
+
     if missing_tables:
         return ValidationResult(
             is_valid=False,
@@ -250,14 +264,14 @@ def validate_columns_exist(
     selected_columns: list[str],
 ) -> ValidationResult:
     """
-    Check whether selected columns exist in referenced tables.
+    Check whether the selected columns exist in the referenced tables.
 
     MVP rules:
-    - '*' is always allowed
-    - 'table.*' is allowed if the table exists
+    - '*' is always okay
+    - 'table.*' is okay if the table exists
     - 'table.column' must exist in that table
     - 'column' must exist in at least one referenced table
-    - computed expressions are ignored upstream and are not validated here
+    - computed expressions are skipped before this step
     """
     if not selected_columns:
         return ValidationResult(
@@ -268,11 +282,15 @@ def validate_columns_exist(
     existing_tables = list_tables(conn)
     table_lookup = {name.lower(): name for name in existing_tables}
 
+    # Build a quick lowercase schema map for the tables involved.
     schema_lookup: dict[str, set[str]] = {}
     for table_name in table_names:
         actual_table_name = table_lookup[table_name.lower()]
         schema = get_table_schema(conn, actual_table_name)
-        schema_lookup[actual_table_name.lower()] = {col.name.lower() for col in schema.columns}
+        schema_lookup[actual_table_name.lower()] = {
+            col.name.lower()
+            for col in schema.columns
+        }
 
     all_columns = set()
     for cols in schema_lookup.values():
@@ -284,6 +302,7 @@ def validate_columns_exist(
 
         if re.fullmatch(rf"{_IDENTIFIER_PATTERN}\.\*", token):
             table_name = token.split(".", 1)[0].lower()
+
             if table_name not in schema_lookup:
                 return ValidationResult(
                     is_valid=False,
@@ -321,12 +340,12 @@ def validate_columns_exist(
 
 def validate_select_query(conn: sqlite3.Connection, sql: str) -> ValidationResult:
     """
-    Full validator entrypoint.
+    Main entry point for validating a SELECT query.
 
     Validation flow:
-    1. structure validation
-    2. table existence validation
-    3. column existence validation
+    1. structure check
+    2. table existence check
+    3. column existence check
     """
     structure_result = validate_query_structure(sql)
     if not structure_result.is_valid:

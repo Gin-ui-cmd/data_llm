@@ -1,5 +1,5 @@
 from pathlib import Path
-
+#this code is generated with the help of AI
 from datasheet_ai.config import DEFAULT_DB_PATH, ensure_project_dirs
 from datasheet_ai.llm.llm_adapter import LLMAdapter
 from datasheet_ai.query_service.query_service import QueryService
@@ -7,7 +7,10 @@ from datasheet_ai.query_service.query_service import QueryService
 
 def print_menu() -> None:
     """
-    Print the available CLI commands.
+    Print the list of available CLI commands.
+
+    This is the main help menu users see when they start
+    the program or type "help".
     """
     print("\n=== Datasheet AI CLI ===")
     print("1. tables                  -> list all tables")
@@ -22,7 +25,10 @@ def print_menu() -> None:
 
 def _print_query_result(result) -> None:
     """
-    Pretty-print a QueryResult.
+    Pretty-print a QueryResult object.
+
+    If the query fails, show the error.
+    If it succeeds, print the SQL, columns, and rows in a simple table-like format.
     """
     if not result.success:
         print(f"Error: {result.error_message}")
@@ -38,7 +44,7 @@ def _print_query_result(result) -> None:
         return
 
     print(" | ".join(result.columns))
-    print("-" * (len(" | ".join(result.columns))))
+    print("-" * len(" | ".join(result.columns)))
 
     if not result.rows:
         print("(no rows)")
@@ -50,9 +56,9 @@ def _print_query_result(result) -> None:
 
 def _handle_load_command(service: QueryService, command: str) -> None:
     """
-    Handle CSV load commands.
+    Handle CSV loading commands entered by the user.
 
-    Supported forms:
+    Supported formats:
     - load <csv_path>
     - load <csv_path> <table_name>
     """
@@ -79,9 +85,10 @@ def _handle_load_command(service: QueryService, command: str) -> None:
 
 def main() -> None:
     """
-    CLI entrypoint.
+    Main CLI entrypoint.
 
-    CLI must not access the database directly.
+    Important design choice:
+    the CLI does not talk to the database directly.
     All user actions go through QueryService.
     """
     ensure_project_dirs()
